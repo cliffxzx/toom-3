@@ -2,7 +2,9 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -12,10 +14,11 @@ const int max_digit_length = 500;
 
 typedef long long BigIntBase;
 typedef vector<BigIntBase> BigIntDigits;
-//b
-const int per_base_digit = 10000;
-//len(b)
-const int per_base_digit_length = 4; //ceil(numeric_limits<BigIntBase>::digits10 / 2.0) - 1;
+
+// ceil(numeric_limits<BigIntBase>::digits10 / 2.0) - 1;
+static const int digit_base_len = 8;
+// b
+static const BigIntBase digit_base = 100000000;
 class BigInt {
 public:
   BigInt(int digits_capacity = 0) {
@@ -35,8 +38,9 @@ public:
   }
 
   BigInt(string s) {
-    digits.reserve(ceil(max_digit_length / per_base_digit_length));
-    for (int pos = max(0, (int)s.size() - per_base_digit_length); !s.empty(); pos -= min(pos, per_base_digit_length)) {
+    digits.reserve(ceil(max_digit_length / digit_base_len));
+    negative = s[0] == '-';
+    for (int pos = max(0, (int)s.size() - digit_base_len); !s.empty(); pos -= min(pos, digit_base_len)) {
       digits.push_back(stoll(s.substr(pos)));
       s.erase(pos);
     }
@@ -70,7 +74,20 @@ public:
 
   BigInt operator*(const BigInt &rhs) {
     const BigInt lhs = *this;
-    if (lhs.digits.size() == 1) {
+    if (lhs.digits.empty() || rhs.digits.empty()) {
+      return BigInt();
+    } else if (lhs.digits.size() == 1 && rhs.digits.size() == 1) {
+      BigIntBase val = lhs.digits[0] * rhs.digits[0];
+      BigIntDigits tmp;
+      if (val < digit_base)
+        tmp = {val};
+      else
+        tmp = {val % digit_base, val / digit_base};
+
+      BigInt result(tmp);
+      result.negative = lhs.negative ^ rhs.negative;
+      return result;
+    } else if (lhs.digits.size() == 1) {
       BigInt result = multiply(rhs, lhs.digits[0]);
       result.negative ^= lhs.negative;
       return result;
@@ -78,12 +95,40 @@ public:
       BigInt result = multiply(lhs, rhs.digits[0]);
       result.negative ^= rhs.negative;
       return result;
-    } else
-      return toom3(lhs, rhs);
+    }
+
+    BigInt result = toom3(lhs, rhs);
+    result.negative = lhs.negative ^ rhs.negative;
+    return result;
   }
 
   BigInt operator<<(const int n) {
     return shift_left(this->digits, n);
+  }
+
+  string to_string() {
+    if (this->digits.empty())
+      return "0";
+
+    stringstream ss;
+    if (this->negative)
+      ss << "-";
+
+    ss << std::to_string(this->digits.back());
+    for (auto it = this->digits.rbegin() + 1; it != this->digits.rend(); ++it)
+      ss << setw(digit_base_len) << setfill('0') << std::to_string(*it);
+
+    return ss.str();
+  }
+
+  BigInt from_string(string s) {
+    digits.clear();
+    negative = s[0] == '-';
+    for (int pos = max(0, (int)s.size() - digit_base_len); !s.empty(); pos -= min(pos, digit_base_len)) {
+      digits.push_back(stoll(s.substr(pos)));
+      s.erase(pos);
+    }
+    return *this;
   }
 
 private:
@@ -91,28 +136,17 @@ private:
   BigIntDigits digits;
 
   BigInt toom3_slice_num(const BigInt &num, int n, int i) {
-    BigIntDigits::const_iterator range[] = {num.digits.begin() + i * n, num.digits.begin() + i * (n + 1)};
-    if (range[0] >= num.digits.begin() && range[0] <= num.digits.end() && range[1] >= num.digits.begin() && range[1] <= num.digits.end())
+    BigIntDigits::const_iterator range[] = {num.digits.begin() + n * i, min(num.digits.end(), num.digits.begin() + (n + 1) * i)};
+    if (range[0] >= num.digits.begin() && range[0] <= num.digits.end()) {
+      range[1] = min(num.digits.end(), range[1]);
       return BigInt(BigIntDigits(range[0], range[1]));
+    }
 
     return BigInt();
   }
 
   BigInt toom3(BigInt num1, BigInt num2) {
-    if (num1.digits.empty() || num2.digits.empty())
-      return BigInt();
-
-    if (num1.digits.size() == 1 && num2.digits.size() == 1) {
-      BigIntBase result = num1.digits[0] * num2.digits[0];
-      BigIntDigits tmp;
-      if (result < per_base_digit)
-        tmp = {result};
-      else
-        tmp = {result / per_base_digit, result % per_base_digit};
-      return BigInt(tmp);
-    }
-
-    int i = max((log(num1.digits.size()) / log(per_base_digit_length)) / 3, (log(num2.digits.size()) / log(per_base_digit_length))) + 1;
+    int i = ceil(max(num1.digits.size() / 3.0, num2.digits.size() / 3.0));
     BigInt m0 = toom3_slice_num(num1, 0, i);
     BigInt m1 = toom3_slice_num(num1, 1, i);
     BigInt m2 = toom3_slice_num(num1, 2, i);
@@ -142,18 +176,18 @@ private:
 
     BigInt r0 = rp0;
     BigInt r4 = rin;
-    BigInt r3 = divide((rn2 - rp1), 3);
-    BigInt r1 = divide((rp1 - rn1), 2);
+    BigInt r3 = divide(rn2 - rp1, 3);
+    BigInt r1 = divide(rp1 - rn1, 2);
     BigInt r2 = rn1 - rp0;
-    r3 = divide((r2 - r3), 2) + multiply(rin, 2);
+    r3 = divide(r2 - r3, 2) + multiply(rin, 2);
     r2 = r2 + r1 - r4;
     r1 = r1 - r3;
 
     BigInt result = r0;
     result = result + (r1 << i);
-    result = result + (r2 << i * 2);
-    result = result + (r3 << i * 3);
-    result = result + (r4 << i * 4);
+    result = result + (r2 << (i * 2));
+    result = result + (r3 << (i * 3));
+    result = result + (r4 << (i * 4));
 
     return result;
   }
@@ -180,19 +214,21 @@ private:
     }
 
     for (int w = 0; w < result.digits.size() - 1; ++w) {
-      result.digits[w + 1] += result.digits[w] / per_base_digit;
-      result.digits[w] %= per_base_digit;
+      result.digits[w + 1] += result.digits[w] / digit_base;
+      result.digits[w] %= digit_base;
     }
 
-    if (result.digits.back() >= per_base_digit) {
-      result.digits.push_back(result.digits.back() / per_base_digit);
-      result.digits[result.digits.size() - 2] %= per_base_digit;
+    if (result.digits.back() >= digit_base) {
+      result.digits.push_back(result.digits.back() / digit_base);
+      result.digits[result.digits.size() - 2] %= digit_base;
     }
+
+    while (!result.digits.empty() && !result.digits.back())
+      result.digits.pop_back();
 
     return result;
   }
 
-  // greater(lhs, rhs) must be true
   BigInt minus(const BigIntDigits &lhs, const BigIntDigits &rhs) {
     if (lhs.empty())
       return rhs;
@@ -216,22 +252,27 @@ private:
     for (int w = 0; w < result.digits.size() - 1; ++w)
       if (result.digits[w] < 0) {
         result.digits[w + 1] -= 1;
-        result.digits[w] += per_base_digit;
+        result.digits[w] += digit_base;
       }
+
+    while (!result.digits.empty() && !result.digits.back())
+      result.digits.pop_back();
 
     return result;
   }
 
   BigInt divide(const BigInt &lhs, const int divisor) {
     BigIntDigits reminder(lhs.digits);
-    string quotient;
+    BigIntDigits quotient(lhs.digits.capacity());
 
     for (int w = reminder.size() - 1; w >= 0; --w) {
-      int tmp = reminder[w] / divisor;
-      if (tmp)
-        quotient += to_string(tmp);
-      reminder[w - 1] += (reminder[w] % divisor) * per_base_digit;
+      BigIntBase tmp = reminder[w] / divisor;
+      quotient.insert(quotient.begin(), tmp);
+      reminder[w - 1] += (reminder[w] % divisor) * digit_base;
     }
+
+    while (!quotient.empty() && !quotient.back())
+      quotient.pop_back();
 
     BigInt result(quotient);
     result.negative = lhs.negative;
@@ -245,13 +286,16 @@ private:
       nums[w] *= multiplier;
 
     for (int w = 0; w < nums.size(); ++w)
-      if (nums[w] >= per_base_digit) {
+      if (nums[w] >= digit_base) {
         if (w + 1 == nums.size())
-          nums.push_back(nums[w] / per_base_digit);
+          nums.push_back(nums[w] / digit_base);
         else
-          nums[w + 1] += nums[w] / per_base_digit;
-        nums[w] %= per_base_digit;
+          nums[w + 1] += nums[w] / digit_base;
+        nums[w] %= digit_base;
       }
+
+    while (!nums.empty() && !nums.back())
+      nums.pop_back();
 
     BigInt result(nums);
     result.negative = lhs.negative;
@@ -262,6 +306,9 @@ private:
     BigInt result(lhs);
     for (int w = 0; w < n; ++w)
       result.digits.insert(result.digits.begin(), 0);
+
+    while (!result.digits.empty() && !result.digits.back())
+      result.digits.pop_back();
 
     return result;
   }
@@ -303,19 +350,26 @@ private:
 
 // 在更大的數字中 比較快的算法 Schönhage–Strassen algorithm
 // 變數宣告
+BigInt num1, num2;
 string mul(string &s1, string &s2) {
-  BigInt result = BigInt(s1) * BigInt(s2);
+  while (s1.back() == '\r' || s1.back() == '\n')
+    s1.erase(s1.end() - 1);
 
-  return "";
+  while (s2.back() == '\r' || s2.back() == '\n')
+    s2.erase(s2.end() - 1);
+
+  BigInt result = num1.from_string(s1) * num2.from_string(s2);
+  return result.to_string();
 }
 
 int main() {
   string s1, s2, ans;
   int length;
   long long t;
+  fstream cout("time2.txt", ios::out);
 
   // test 10 ~ 500位數
-  for (int digit = 9; digit <= max_digit_length; digit += 5) {
+  for (int digit = 5; digit <= max_digit_length; digit += 5) {
 
     // 讀檔
     // read file
@@ -324,7 +378,7 @@ int main() {
     getline(in, s2);
 
     // 資料前處理(string to int[ ] or string to char [ ] or ...)
-    int testCnt;
+    int testCnt = 1;
 
     // start timing
     auto start = chrono::high_resolution_clock::now();
