@@ -77,10 +77,12 @@ public:
     } else if ((*this).digits.size() == 1 && rhs.digits.size() == 1) {
       BigIntBase val = (*this).digits[0] * rhs.digits[0];
       return BigInt(val < digit_base ? BigIntDigits{val} : BigIntDigits{val % digit_base, val / digit_base}, (*this).negative ^ rhs.negative);
-    } else if ((*this).digits.size() == 1)
-      return BigInt(multiply(rhs, (*this).digits[0]).digits, (*this).negative ^ rhs.negative);
+    } else if ((*this).digits.size() < 56 || rhs.digits.size() < 56)
+      return BigInt(multiply((*this).digits, rhs.digits), (*this).negative ^ rhs.negative);
+    else if ((*this).digits.size() == 1)
+      return BigInt(multiply_by_int(rhs, (*this).digits[0]).digits, (*this).negative ^ rhs.negative);
     else if (rhs.digits.size() == 1)
-      return BigInt(multiply((*this), rhs.digits[0]).digits, (*this).negative ^ rhs.negative);
+      return BigInt(multiply_by_int((*this), rhs.digits[0]).digits, (*this).negative ^ rhs.negative);
 
     return BigInt(toom3(span((*this).digits), span(rhs.digits)), (*this).negative ^ rhs.negative);
   }
@@ -150,14 +152,14 @@ private:
     BigInt pp0 = m0;
     BigInt pp1 = plus(pt0.digits, m1);
     BigInt pn1 = pt0 - m1;
-    BigInt pn2 = multiply(pn1 + m2, 2) - m0;
+    BigInt pn2 = multiply_by_int(pn1 + m2, 2) - m0;
     BigInt pin = m2;
 
     BigInt qt0 = plus(n0, n2);
     BigInt qp0 = n0;
     BigInt qp1 = plus(qt0.digits, n1);
     BigInt qn1 = qt0 - n1;
-    BigInt qn2 = multiply(qn1 + n2, 2) - n0;
+    BigInt qn2 = multiply_by_int(qn1 + n2, 2) - n0;
     BigInt qin = n2;
 
     BigInt rp0 = pp0 * qp0;
@@ -168,10 +170,10 @@ private:
 
     BigInt r0 = rp0;
     BigInt r4 = rin;
-    BigInt r3 = divide(rn2 - rp1, 3);
-    BigInt r1 = divide(rp1 - rn1, 2);
+    BigInt r3 = divide_by_int(rn2 - rp1, 3);
+    BigInt r1 = divide_by_int(rp1 - rn1, 2);
     BigInt r2 = rn1 - rp0;
-    r3 = divide(r2 - r3, 2) + multiply(rin, 2);
+    r3 = divide_by_int(r2 - r3, 2) + multiply_by_int(rin, 2);
     r2 = r2 + r1 - r4;
     r1 = r1 - r3;
 
@@ -257,6 +259,35 @@ private:
     return result;
   }
 
+  BigIntDigits multiply(const span<const BigIntBase> &lhs, const span<const BigIntBase> &rhs) {
+    auto start = chrono::high_resolution_clock::now();
+    if (lhs.empty() || rhs.empty())
+      return BigIntDigits();
+
+    BigIntDigits result(lhs.size() + rhs.size());
+
+    for (int w = 0; w < lhs.size(); ++w) {
+      for (int w1 = 0; w1 < rhs.size(); ++w1) {
+        result[w1 + w] += lhs[w] * rhs[w1];
+        result[w1 + w + 1] += result[w1 + w] / digit_base;
+        result[w1 + w] %= digit_base;
+      }
+
+      int pos = rhs.size() + w + 1;
+      while (pos < result.size() && result[pos] > digit_base) {
+        result[pos + 1] += result[pos] / digit_base;
+        result[pos] %= digit_base;
+      }
+    }
+
+    while (!result.empty() && !result.back())
+      result.pop_back();
+
+    auto end = chrono::high_resolution_clock::now();
+    multiply_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    return result;
+  }
+
   void shift_left(BigIntDigits &lhs, const int n) {
     auto start = chrono::high_resolution_clock::now();
     if (!lhs.empty()) {
@@ -268,7 +299,7 @@ private:
     }
   }
 
-  BigInt divide(const BigInt &lhs, const int divisor) {
+  BigInt divide_by_int(const BigInt &lhs, const int divisor) {
     auto start = chrono::high_resolution_clock::now();
     BigIntDigits reminder(lhs.digits);
     BigInt result(lhs.digits.capacity(), lhs.negative);
@@ -286,7 +317,7 @@ private:
     return result;
   }
 
-  BigInt multiply(const BigInt &lhs, const int multiplier) {
+  BigInt multiply_by_int(const BigInt &lhs, const int multiplier) {
     auto start = chrono::high_resolution_clock::now();
     BigInt result(lhs.digits, lhs.negative);
 

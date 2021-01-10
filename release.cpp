@@ -21,23 +21,23 @@ typedef vector<BigIntBase> BigIntDigits;
 static const int digit_base_len = 9;
 // b
 static const BigIntBase digit_base = 1000000000;
-
 class BigInt {
-
 public:
   BigInt(int digits_capacity = 0, bool nega = false) {
     negative = nega;
-    digits.reserve(digits_capacity);
+    digits.reserve(126);
   }
 
-  BigInt(BigIntDigits _digits, bool nega = false) {
+  BigInt(const BigIntDigits &_digits, bool nega = false) {
     negative = nega;
+    digits.reserve(126);
     digits = _digits;
   }
 
   BigInt(const span<const BigIntBase> &range, bool nega = false) {
     negative = nega;
-    digits = BigIntDigits(range.begin(), range.end());
+    digits.reserve(126);
+    digits.insert(digits.begin(), range.begin(), range.end());
   }
 
   BigInt operator+(const BigInt &rhs) {
@@ -58,10 +58,12 @@ public:
     } else if ((*this).digits.size() == 1 && rhs.digits.size() == 1) {
       BigIntBase val = (*this).digits[0] * rhs.digits[0];
       return BigInt(val < digit_base ? BigIntDigits{val} : BigIntDigits{val % digit_base, val / digit_base}, (*this).negative ^ rhs.negative);
-    } else if ((*this).digits.size() == 1)
-      return BigInt(multiply(rhs, (*this).digits[0]).digits, (*this).negative ^ rhs.negative);
+    } else if ((*this).digits.size() < 7 || rhs.digits.size() < 7)
+      return BigInt(multiply((*this).digits, rhs.digits), (*this).negative ^ rhs.negative);
+    else if ((*this).digits.size() == 1)
+      return BigInt(multiply_by_int(rhs, (*this).digits[0]).digits, (*this).negative ^ rhs.negative);
     else if (rhs.digits.size() == 1)
-      return BigInt(multiply((*this), rhs.digits[0]).digits, (*this).negative ^ rhs.negative);
+      return BigInt(multiply_by_int((*this), rhs.digits[0]).digits, (*this).negative ^ rhs.negative);
 
     return BigInt(toom3(span((*this).digits), span(rhs.digits)), (*this).negative ^ rhs.negative);
   }
@@ -120,14 +122,14 @@ private:
     BigInt pp0 = m0;
     BigInt pp1 = plus(pt0.digits, m1);
     BigInt pn1 = pt0 - m1;
-    BigInt pn2 = multiply(pn1 + m2, 2) - m0;
+    BigInt pn2 = multiply_by_int(pn1 + m2, 2) - m0;
     BigInt pin = m2;
 
-    BigInt qt0 = BigInt(n0) + BigInt(n2);
+    BigInt qt0 = plus(n0, n2);
     BigInt qp0 = n0;
-    BigInt qp1 = qt0 + n1;
+    BigInt qp1 = plus(qt0.digits, n1);
     BigInt qn1 = qt0 - n1;
-    BigInt qn2 = multiply(qn1 + n2, 2) - n0;
+    BigInt qn2 = multiply_by_int(qn1 + n2, 2) - n0;
     BigInt qin = n2;
 
     BigInt rp0 = pp0 * qp0;
@@ -138,10 +140,10 @@ private:
 
     BigInt r0 = rp0;
     BigInt r4 = rin;
-    BigInt r3 = divide(rn2 - rp1, 3);
-    BigInt r1 = divide(rp1 - rn1, 2);
+    BigInt r3 = divide_by_int(rn2 - rp1, 3);
+    BigInt r1 = divide_by_int(rp1 - rn1, 2);
     BigInt r2 = rn1 - rp0;
-    r3 = divide(r2 - r3, 2) + multiply(rin, 2);
+    r3 = divide_by_int(r2 - r3, 2) + multiply_by_int(rin, 2);
     r2 = r2 + r1 - r4;
     r1 = r1 - r3;
 
@@ -221,6 +223,32 @@ private:
     return result;
   }
 
+  BigIntDigits multiply(const span<const BigIntBase> &lhs, const span<const BigIntBase> &rhs) {
+    if (lhs.empty() || rhs.empty())
+      return BigIntDigits();
+
+    BigIntDigits result(lhs.size() + rhs.size());
+
+    for (int w = 0; w < lhs.size(); ++w) {
+      for (int w1 = 0; w1 < rhs.size(); ++w1) {
+        result[w1 + w] += lhs[w] * rhs[w1];
+        result[w1 + w + 1] += result[w1 + w] / digit_base;
+        result[w1 + w] %= digit_base;
+      }
+
+      int pos = rhs.size() + w + 1;
+      while (pos < result.size() && result[pos] > digit_base) {
+        result[pos + 1] += result[pos] / digit_base;
+        result[pos] %= digit_base;
+      }
+    }
+
+    while (!result.empty() && !result.back())
+      result.pop_back();
+
+    return result;
+  }
+
   void shift_left(BigIntDigits &lhs, const int n) {
     if (!lhs.empty()) {
       BigIntDigits zeros(n, 0);
@@ -228,7 +256,7 @@ private:
     }
   }
 
-  BigInt divide(const BigInt &lhs, const int divisor) {
+  BigInt divide_by_int(const BigInt &lhs, const int divisor) {
     BigIntDigits reminder(lhs.digits);
     BigInt result(lhs.digits.capacity(), lhs.negative);
 
@@ -243,7 +271,7 @@ private:
     return result;
   }
 
-  BigInt multiply(const BigInt &lhs, const int multiplier) {
+  BigInt multiply_by_int(const BigInt &lhs, const int multiplier) {
     BigInt result(lhs.digits, lhs.negative);
 
     for (int w = 0; w < result.digits.size(); ++w)
@@ -273,6 +301,31 @@ private:
   }
 };
 
+/*
+    目標 : 大數乘法 N^(log2 3) 盡量在200位內超車N^2，最好的情況是能在100位內超車
+
+    O 使用宣告好的陣列，重複使用。
+    X 禁止使用malloc
+    ! 宣告Array的總長度需 < 5000
+
+    input:
+    10. 15. 20. 25. ...500位數
+
+    步驟:
+    1. 拿到兩數字，做前處理
+     + 開始算時間
+    2. for loop 200次(不斷重複call某一個計算func，回傳ans為string)
+     + 結束時間
+    3. 取平均
+
+*/
+
+// unsigned long long range = (0 ~ 18446744073709551615)
+// 所以每格相乘在範圍內的最大值 = 18446744073709551615 ^ 0.5 = 4294967296
+// 較方便的實作方法是 每格用 unsigned long long 存 9 位數
+
+// 在更大的數字中 比較快的算法 Schönhage–Strassen algorithm
+// 變數宣告
 BigInt num1, num2;
 string mul(string &s1, string &s2) {
   while (s1.back() == '\r' || s1.back() == '\n')
@@ -291,6 +344,7 @@ int main() {
   long long t;
   fstream fout("out.txt", ios::out);
   fstream cout("time2.txt", ios::out);
+  fstream analyze("analyze.txt", ios::out);
 
   // test 10 ~ 500位數
   for (int digit = 10; digit <= max_digit_length; digit += 5) {
@@ -306,7 +360,6 @@ int main() {
 
     // start timing
     auto start = chrono::high_resolution_clock::now();
-
     //200次乘法
     for (testCnt = 0; testCnt < 200; testCnt++) {
       // large number multiplication
