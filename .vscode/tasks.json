@@ -4,9 +4,10 @@
     {
       "type": "shell",
       "label": "clang++ build active file",
-      "command": "/usr/bin/clang++",
+      "command": "/usr/local/Cellar/llvm/10.0.0_3/bin/clang++",
       "args": [
-        "-std=c++11",
+        "-std=c++2a",
+        "-O3",
         "-g",
         "${file}",
         "-o",

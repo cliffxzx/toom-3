@@ -7,7 +7,6 @@
 #include <span>
 #include <sstream>
 #include <string>
-#include <utility>
 #include <vector>
 
 using namespace std;
@@ -16,16 +15,6 @@ const int max_digit_length = 500;
 
 typedef long long BigIntBase;
 typedef vector<BigIntBase> BigIntDigits;
-static long long all_time = 0;
-static long long shift_left_time = 0;
-static long long plus_time = 0;
-static long long minus_time = 0;
-static long long multiply_time = 0;
-static long long divide_time = 0;
-static long long toom_slice_time = 0;
-static long long compare_time = 0;
-static long long construct_time = 0;
-static long long to_string_time = 0;
 
 // ceil(numeric_limits<BigIntBase>::digits10 / 2.0) - 1;
 static const int digit_base_len = 9;
@@ -34,29 +23,13 @@ static const BigIntBase digit_base = 1000000000;
 class BigInt {
 public:
   BigInt(int digits_capacity = 0, bool nega = false) {
-    auto start = chrono::high_resolution_clock::now();
     negative = nega;
-    digits.reserve(126);
-    auto end = chrono::high_resolution_clock::now();
-    construct_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    digits.reserve(digits_capacity);
   }
 
-  BigInt(const BigIntDigits &_digits, bool nega = false) {
-    auto start = chrono::high_resolution_clock::now();
+  BigInt(BigIntDigits _digits, bool nega = false) {
     negative = nega;
-    digits.reserve(126);
     digits = _digits;
-    auto end = chrono::high_resolution_clock::now();
-    construct_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  }
-
-  BigInt(const span<const BigIntBase> &range, bool nega = false) {
-    auto start = chrono::high_resolution_clock::now();
-    negative = nega;
-    digits.reserve(126);
-    digits.insert(digits.begin(), range.begin(), range.end());
-    auto end = chrono::high_resolution_clock::now();
-    construct_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   }
 
   BigInt operator+(const BigInt &rhs) {
@@ -82,11 +55,10 @@ public:
     else if (rhs.digits.size() == 1)
       return BigInt(multiply((*this), rhs.digits[0]).digits, (*this).negative ^ rhs.negative);
 
-    return BigInt(toom3(span((*this).digits), span(rhs.digits)), (*this).negative ^ rhs.negative);
+    return BigInt(toom3((*this).digits, rhs.digits), (*this).negative ^ rhs.negative);
   }
 
   string to_string() {
-    auto start = chrono::high_resolution_clock::now();
     if (this->digits.empty())
       return "0";
 
@@ -98,13 +70,10 @@ public:
     for (auto it = this->digits.rbegin() + 1; it != this->digits.rend(); ++it)
       ss << setw(digit_base_len) << setfill('0') << std::to_string(*it);
 
-    auto end = chrono::high_resolution_clock::now();
-    to_string_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return ss.str();
   }
 
   BigInt from_string(string s) {
-    auto start = chrono::high_resolution_clock::now();
     digits.clear();
     negative = s[0] == '-';
     for (int pos = max(0, (int)s.size() - digit_base_len); pos >= 0; pos -= digit_base_len)
@@ -113,8 +82,6 @@ public:
     if (s.size() % digit_base_len)
       digits.push_back(stoll(s.substr(0, s.size() % digit_base_len)));
 
-    auto end = chrono::high_resolution_clock::now();
-    construct_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return *this;
   }
 
@@ -122,40 +89,33 @@ private:
   bool negative;
   BigIntDigits digits;
 
-  const span<const BigIntBase> toom3_slice_num(const span<const BigIntBase> &num, const int &n, const int &i) {
-    auto start = chrono::high_resolution_clock::now();
-    int begin = n * i;
-    if (begin < num.size()) {
-      const span<const BigIntBase> result = num.subspan(begin, min((int)num.size() - begin, i));
-      auto end = chrono::high_resolution_clock::now();
-      toom_slice_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-      return result;
-    }
+  BigInt toom3_slice_num(const BigIntDigits &num, const int n, const int i) {
+    BigIntDigits::const_iterator begin = num.begin() + n * i;
+    if (begin >= num.begin() && begin <= num.end())
+      return BigInt(BigIntDigits(begin, min(num.end(), num.begin() + (n + 1) * i)));
 
-    auto end = chrono::high_resolution_clock::now();
-    toom_slice_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-    return span<const BigIntBase>();
+    return BigInt();
   }
 
-  BigIntDigits toom3(const span<const BigIntBase> &num1, const span<const BigIntBase> &num2) {
+  BigIntDigits toom3(const BigIntDigits &num1, const BigIntDigits &num2) {
     int i = ceil(max(num1.size() / 3.0, num2.size() / 3.0));
-    const span<const BigIntBase> m0 = toom3_slice_num(num1, 0, i);
-    const span<const BigIntBase> m1 = toom3_slice_num(num1, 1, i);
-    const span<const BigIntBase> m2 = toom3_slice_num(num1, 2, i);
-    const span<const BigIntBase> n0 = toom3_slice_num(num2, 0, i);
-    const span<const BigIntBase> n1 = toom3_slice_num(num2, 1, i);
-    const span<const BigIntBase> n2 = toom3_slice_num(num2, 2, i);
+    BigInt m0 = toom3_slice_num(num1, 0, i);
+    BigInt m1 = toom3_slice_num(num1, 1, i);
+    BigInt m2 = toom3_slice_num(num1, 2, i);
+    BigInt n0 = toom3_slice_num(num2, 0, i);
+    BigInt n1 = toom3_slice_num(num2, 1, i);
+    BigInt n2 = toom3_slice_num(num2, 2, i);
 
-    BigInt pt0 = plus(m0, m2);
+    BigInt pt0 = m0 + m2;
     BigInt pp0 = m0;
-    BigInt pp1 = plus(pt0.digits, m1);
+    BigInt pp1 = pt0 + m1;
     BigInt pn1 = pt0 - m1;
     BigInt pn2 = multiply(pn1 + m2, 2) - m0;
     BigInt pin = m2;
 
-    BigInt qt0 = plus(n0, n2);
+    BigInt qt0 = n0 + n2;
     BigInt qp0 = n0;
-    BigInt qp1 = plus(qt0.digits, n1);
+    BigInt qp1 = qt0 + n1;
     BigInt qn1 = qt0 - n1;
     BigInt qn2 = multiply(qn1 + n2, 2) - n0;
     BigInt qin = n2;
@@ -176,36 +136,24 @@ private:
     r1 = r1 - r3;
 
     BigIntDigits result = r0.digits;
-    if (!r1.digits.empty()) {
-      shift_left(r1.digits, i);
-      result = plus(result, r1.digits);
-    }
-
-    if (!r2.digits.empty()) {
-      shift_left(r2.digits, i << 1);
-      result = plus(result, r2.digits);
-    }
-
-    if (!r3.digits.empty()) {
-      shift_left(r3.digits, i * 3);
-      result = plus(result, r3.digits);
-    }
-
-    if (!r4.digits.empty()) {
-      shift_left(r4.digits, i << 2);
-      result = plus(result, r4.digits);
-    }
+    if (!r1.digits.empty())
+      result = plus(result, shift_left(r1.digits, i));
+    if (!r2.digits.empty())
+      result = plus(result, shift_left(r2.digits, i << 1));
+    if (!r3.digits.empty())
+      result = plus(result, shift_left(r3.digits, i * 3));
+    if (!r4.digits.empty())
+      result = plus(result, shift_left(r4.digits, i << 2));
 
     return result;
   }
 
-  BigIntDigits plus(const span<const BigIntBase> &lhs, const span<const BigIntBase> &rhs) {
-    auto start = chrono::high_resolution_clock::now();
+  BigIntDigits plus(const BigIntDigits &lhs, const BigIntDigits &rhs) {
     if (lhs.empty())
-      return BigIntDigits(rhs.begin(), rhs.end());
+      return rhs;
 
     if (rhs.empty())
-      return BigIntDigits(lhs.begin(), lhs.end());
+      return lhs;
 
     int max_length = max(lhs.size(), rhs.size());
     BigIntDigits result;
@@ -224,18 +172,15 @@ private:
       result[result.size() - 2] %= digit_base;
     }
 
-    auto end = chrono::high_resolution_clock::now();
-    plus_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return result;
   }
 
-  BigIntDigits minus(const span<const BigIntBase> &lhs, const span<const BigIntBase> &rhs) {
-    auto start = chrono::high_resolution_clock::now();
+  BigIntDigits minus(const BigIntDigits &lhs, const BigIntDigits &rhs) {
     if (lhs.empty())
-      return BigIntDigits(rhs.begin(), rhs.end());
+      return rhs;
 
     if (rhs.empty())
-      return BigIntDigits(lhs.begin(), lhs.end());
+      return lhs;
 
     BigIntDigits result;
     result.reserve(lhs.size() + 1);
@@ -252,24 +197,21 @@ private:
     while (!result.empty() && !result.back())
       result.pop_back();
 
-    auto end = chrono::high_resolution_clock::now();
-    minus_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return result;
   }
 
-  void shift_left(BigIntDigits &lhs, const int n) {
-    auto start = chrono::high_resolution_clock::now();
+  BigIntDigits shift_left(const BigIntDigits &lhs, const int n) {
     if (!lhs.empty()) {
-      BigIntDigits zeros(n, 0);
-      lhs.insert(lhs.begin(), zeros.begin(), zeros.end());
+      BigIntDigits result(n, 0);
+      result.insert(result.end(), lhs.begin(), lhs.end());
 
-      auto end = chrono::high_resolution_clock::now();
-      shift_left_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+      return result;
     }
+
+    return BigIntDigits();
   }
 
   BigInt divide(const BigInt &lhs, const int divisor) {
-    auto start = chrono::high_resolution_clock::now();
     BigIntDigits reminder(lhs.digits);
     BigInt result(lhs.digits.capacity(), lhs.negative);
 
@@ -281,13 +223,10 @@ private:
     while (!result.digits.empty() && !result.digits.back())
       result.digits.pop_back();
 
-    auto end = chrono::high_resolution_clock::now();
-    divide_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return result;
   }
 
   BigInt multiply(const BigInt &lhs, const int multiplier) {
-    auto start = chrono::high_resolution_clock::now();
     BigInt result(lhs.digits, lhs.negative);
 
     for (int w = 0; w < result.digits.size(); ++w)
@@ -302,20 +241,15 @@ private:
         result.digits[w] %= digit_base;
       }
 
-    auto end = chrono::high_resolution_clock::now();
-    multiply_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return result;
   }
 
   bool greater(const BigIntDigits &lhs, const BigIntDigits &rhs) {
-    auto start = chrono::high_resolution_clock::now();
     if (lhs.size() == rhs.size()) {
       int w = lhs.size() - 1;
       while (w >= 0 && lhs[w] == rhs[w])
         --w;
 
-      auto end = chrono::high_resolution_clock::now();
-      compare_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
       return w >= 0 && lhs[w] > rhs[w];
     } else
       return lhs.size() > rhs.size();
@@ -393,22 +327,11 @@ int main() {
     fout << ans << endl;
 
     //average
-    all_time += chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     t = chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() / testCnt;
     cout << t << endl;
 
     in.close();
   }
-  analyze << "all_time: " << all_time << endl;
-  analyze << "shift_left_time: " << (int)((shift_left_time / (double)all_time) * 100) << " " << shift_left_time << endl;
-  analyze << "plus_time: " << (int)((plus_time / (double)all_time) * 100) << " " << plus_time << endl;
-  analyze << "minus_time: " << (int)((minus_time / (double)all_time) * 100) << " " << minus_time << endl;
-  analyze << "multiply_time: " << (int)((multiply_time / (double)all_time) * 100) << " " << multiply_time << endl;
-  analyze << "divide_time: " << (int)((divide_time / (double)all_time) * 100) << " " << divide_time << endl;
-  analyze << "toom_slice_time: " << (int)((toom_slice_time / (double)all_time) * 100) << " " << toom_slice_time << endl;
-  analyze << "compare_time: " << (int)((compare_time / (double)all_time) * 100) << " " << compare_time << endl;
-  analyze << "construct_time: " << (int)((construct_time / (double)all_time) * 100) << " " << construct_time << endl;
-  analyze << "to_string_time: " << (int)((to_string_time / (double)all_time) * 100) << " " << to_string_time << endl;
 
   return 0;
 }
